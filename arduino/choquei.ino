@@ -2,7 +2,7 @@
 #include "RTClib.h" // Use version 1.2.0 RTClib
 // Also, I installed version 1.0.2 of Adafruit Unified Sensor
 #include <Wire.h>
-#include <LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
 #include <Servo.h>
 
 #define DHTPIN 6
@@ -11,12 +11,15 @@
 #define DELAYSERVO 20
 #define LAMPPIN 13
 
+void showSerialMonitor(float T, float H, DateTime now, int L);
+void showLDC(float T, int H, DateTime now, int L);
+
+LiquidCrystal_I2C lcd(0x27,16,2);
 RTC_DS3231 rtc;
 Servo myServo;
 DHT dht(DHTPIN, DHTTYPE);
-const int RS = 12, EN = 11, D4 = 5, D5 = 4, D6 = 3, D7 = 2;
-LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
 float position = 0;
+int day_one;
 
 byte waterDrop[] = {
   B00100,
@@ -40,7 +43,7 @@ byte thermometer[] = {
   B01110
 };
 
-byte clock[] = {
+byte clk[] = {
   B00000,
   B00000,
   B01110,
@@ -76,11 +79,12 @@ byte lampOn[] = {
 void setup(){
 
   Serial.begin(9600);
-  lcd.begin(16, 2);
+  lcd.init();
+  lcd.backlight();
   lcd.clear();
   lcd.createChar(0, thermometer);
   lcd.createChar(1, waterDrop);
-  lcd.createChar(3, clock);
+  lcd.createChar(3, clk);
   lcd.createChar(4, lampOff);
   lcd.createChar(5, lampOn);
   dht.begin();
@@ -92,36 +96,83 @@ void setup(){
     return;
   }
 
-  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  rtc.adjust(DateTime(2023, 12, 18, 23, 59, 45));
+  DateTime now = rtc.now();
+  day_one = now.day();
+  
 }
 
 void loop(){
 
-  delay(3000);
+  delay(1000);
   DateTime now = rtc.now();
-  int lamp;
+  
+  int last = 21;
+  int new_day = now.day();
+  
+  if(new_day != day_one){
+    Serial.print("Last: ");
+    Serial.println(last);
+    Serial.print("Past day: ");
+    Serial.println(day_one);
+    last = last - 1;
+    day_one = new_day;
+    Serial.print("New day: ");
+    Serial.println(day_one);
+    Serial.print("Last: ");
+    Serial.println(last);
+    Serial.println();
+  }
+  
+  int lamp = 0;
   float hum = dht.readHumidity();
   float temp = dht.readTemperature(false); // Set true for Fahrenheit
+  int currentHour = now.hour();
+  int currentMinute = now.minute();
+  int currentSecond = now.second();
 
   if (isnan(hum) || isnan(temp)){
     Serial.println(F("Failed to read from DHT sensor!"));
     return;
   }
 
-  if (temp <= 37.8){
-    digitalWrite(LAMPPIN, HIGH);
-    lamp = 1;
+  if (last >= 3){ 
+    if (temp <= 37.4){
+      digitalWrite(LAMPPIN, HIGH);
+      lamp = 1;
+    }
+    else if (temp >= 37.8){
+      digitalWrite(LAMPPIN, LOW);
+      lamp = 0;
+    }
   }
   else{
-    digitalWrite(LAMPPIN, LOW);
-    lamp = 0;
+    if (temp <= 36.4){
+      digitalWrite(LAMPPIN, HIGH);
+      lamp = 1;
+    }
+    else if (temp >= 36.8){
+      digitalWrite(LAMPPIN, LOW);
+      lamp = 0;
+    }
   }
 
+  int startAngles[] = {0, 45, 90, 135, 180, 135, 90, 45};
+  int endAngles[] = {45, 90, 135, 180, 135, 90, 45, 0};
+
+  if (last >= 3){
+    for (int i = 0; i < 8; ++i){
+      if (currentHour == i * 3 && currentMinute == 0 && currentSecond == 0){
+        moveServo(&startAngles[i], &endAngles[i], 1);
+        break;
+      }
+    }  
+  }
+  
   showSerialMonitor(temp, hum, now, lamp);
   showLDC(temp, hum, now, lamp);
-  moveServoUp();
-  moveServoDown();
-
+  
 }
 
 void showSerialMonitor(float T, float H, DateTime now, int L){
@@ -196,20 +247,19 @@ void showLDC(float T, int H, DateTime now, int L){
 
 }
 
-void moveServoUp(){
-
-  for (position = 0; position <= 180; position += 1){ 
-    myServo.write(position);
-    delay(DELAYSERVO);
-  }
-
-}
-
-void moveServoDown(){
-
-  for (position = 180; position >= 0; position -= 1){
-    myServo.write(position);      
-    delay(DELAYSERVO);
+void moveServo(int *start, int *end, int increment){
+  
+  if (*start < *end){
+    for (int position = *start; position <= *end; position += increment){
+      myServo.write(position);
+      delay(DELAYSERVO);
+    }
+  } 
+  else{
+    for (int position = *start; position >= *end; position -= increment){
+      myServo.write(position);
+      delay(DELAYSERVO);
+    }
   }
   
 }
